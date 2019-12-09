@@ -15,6 +15,7 @@
 **/.dep/**
 **/build/**
 tools/gcc/gcc-arm-none-eabi-*
+tools/logue-cli/logue-cli-*
 tools/emscripten/emsdk
 
 # Doxygen documentation
