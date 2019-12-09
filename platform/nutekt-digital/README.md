@@ -32,6 +32,7 @@ Firmware version >= 1.02 is required to run user units built with SDK version 1.
     1. [GNU Make](../../tools/make)
     2. [Info-ZIP](../../tools/zip)
     3. [logue-cli](../../tools/logue-cli) (optional)
+    4. [Emscripten](../../tools/emscripten) (optional, for web builds)
 
 ### Building the Demo Oscillator (Waves)
 
@@ -217,7 +218,43 @@ For more details see the [Reverb Effect Instance API reference](https://korginc.
 
 ## Web Assembly Builds _(experimental)_
 
-Emscripten builds for oscillators and a Web Audio player are available in the alpha/wasm-builds branch. This is still an experimental feature so some code may not work as expected.
+Oscillators can be built for Web Assembly using Emscripten and Jari Kleimola from [Web Audio Modules](http://webaudiomodules.org) generously provided a [Web Audio runtime and user interface for them](../ext/WAB/web). Note that this is still an experimental feature so some code may not work as expected.
+
+### Before Building
+
+1. Make sure [Emscripten](../../tools/emscripten) is installed in the proper location.
+2. Activate Emscripten for the current environment:
+```
+$ cd tools/emscripten/emsdk
+$ ./emsdk activate 1.38.45
+```
+
+### Building for Web Assembly
+
+ 1. move into an oscillator project directory.
+ 2. type `make wasm` to build the project. (if you have a custom installation of emscripten you can also directly run `emmake make -f WASM.mak`)
+ 3. A `.js` file will be created in the `build/` directory, this is the final product.
+ 
+### Adding a Web Assembly Oscillator to the Web Audio Runtime
+
+ 1. Copy the `.js` file from the previous step to the `osc/KORG/` directory of the [Web Audio runtime](../ext/WAB/web). You can also create your own directory under `osc/`.
+ 2. Edit [logue-synth.js](../ext/WAB/web/logue-synth.js) and add your oscillator as follows:
+
+```C
+    var oscDefs = [
+        // -- KORG
+        { label:"KORG waves",   man:"KORG", type:"waves",   code:"waves.js" },
+        // -- MANUFACTURER_X
+        { label:"MANUFACTURER_X my_osc",   man:"MANUFACTURER_X", type:"my_osc",   code:"my_osc.js" },
+    ];
+```
+ Where `MANUFACTURER_X` would be the name of the directory you created under `osc/`, and `my_osc` the name of your oscillator. 
+ 
+ ### Viewing in Browser
+ 
+ Unfortunately, Web Audio does not seem to function properly when viewing files locally (e.g: via `file://` URIs). The `web/` directory must be copied to and served by a proper web server (or using a local server, Docker, or virtual machine) in order to work.
+ 
+ Compatible browsers are Chrome, Opera and Vivaldi. 
 
 ## Troubleshooting
 
