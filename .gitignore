@@ -5,6 +5,10 @@
 ## Vim Temp Files
 *.swp
 
+## VS Code Files
+.vscode/
+*.code-workspace
+
 # Object files
 *.o
 *.ko
