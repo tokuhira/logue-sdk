@@ -182,6 +182,7 @@
         window.frequencyStack.push(frequency);
         osc_frequency = frequency;
         Module.setOscPitch(osc_frequency);
+        Module.noteOn(note, 100); // TODO: add a slider for velocity
         envelope.gain.cancelAndHoldAtTime(context.currentTime);
         envelope.gain.linearRampToValueAtTime(1.0, context.currentTime + AHREnvelopeTime);
       };
@@ -206,6 +207,8 @@
             envelope.gain.linearRampToValueAtTime(0.0, context.currentTime + AHREnvelopeTime);
           }
         }
+
+        Module.noteOff(note);
       };
 
       document.addEventListener("keydown", (e) => {

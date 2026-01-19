@@ -167,6 +167,19 @@ void setOscPitch(float f0)
   processor.setPitch(f0 / static_cast<float>(SAMPLE_RATE));
 }
 
+void noteOn(uint8_t note, uint8_t velocity)
+{
+  processor.noteOn(note, velocity);
+  // printf("Note On: %d, velocity %d\n", note, velocity);
+}
+
+// note off velocity is not supported by logue-sdk
+void noteOff(uint8_t note)
+{
+  processor.noteOff(note);
+  // printf("Note Off: %d\n", note);
+}
+
 // bind unit parameters
 EMSCRIPTEN_BINDINGS(my_module)
 {
@@ -187,6 +200,10 @@ EMSCRIPTEN_BINDINGS(my_module)
   function("fx_set_bpm", &fx_set_bpm);
 
   function("setOscPitch", &setOscPitch);
+
+  function("noteOn", &noteOn);
+
+  function("noteOff", &noteOff);
 }
 
 bool ProcessAudio(int numInputs, const AudioSampleFrame *inputs,

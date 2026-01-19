@@ -139,11 +139,11 @@
   };
 
   /**
-   * Get frequency of a given note.
-   * @param  {string} note Musical note to convert into hertz.
-   * @return {number} Frequency of note in hertz.
+   * Get key number of a given note.
+   * @param  {string} note Musical note to convert into key number.
+   * @return {number} Key number of note.
    */
-  var getFrequencyOfNote = function (note) {
+  var getKeyNumber = function (note) {
     var notes = [
         'A',
         'A#',
@@ -175,7 +175,26 @@
       key_number = key_number + (octave - 1) * 12 + 1;
     }
 
+    return key_number;
+  };
+
+  /**
+   * Get frequency of a given note.
+   * @param  {string} note Musical note to convert into hertz.
+   * @return {number} Frequency of note in hertz.
+   */
+  var getFrequencyOfNote = function (note) {
+    var key_number = getKeyNumber(note);
     return 440 * Math.pow(2, (key_number - 49) / 12);
+  };
+
+  /**
+   * Get MIDI note number of a given note.
+   * @param  {string} note Musical note to convert into MIDI note number.
+   * @return {number} MIDI note number.
+   */
+  var getMidiNoteNumber = function (note) {
+    return getKeyNumber(note) + 20;
   };
 
   /**
@@ -318,7 +337,10 @@
     if (element.tagName.toLowerCase() == 'li') {
       mouse_is_down = true;
       lightenUp(element);
-      callback(element.title, getFrequencyOfNote(element.title));
+      callback(
+        getMidiNoteNumber(element.title),
+        getFrequencyOfNote(element.title)
+      );
     }
   };
 
@@ -329,7 +351,10 @@
     if (element.tagName.toLowerCase() == 'li') {
       mouse_is_down = false;
       darkenDown(element);
-      callback(element.title, getFrequencyOfNote(element.title));
+      callback(
+        getMidiNoteNumber(element.title),
+        getFrequencyOfNote(element.title)
+      );
     }
   };
 
@@ -339,7 +364,10 @@
   var mouseOver = function (element, callback) {
     if (mouse_is_down) {
       lightenUp(element);
-      callback(element.title, getFrequencyOfNote(element.title));
+      callback(
+        getMidiNoteNumber(element.title),
+        getFrequencyOfNote(element.title)
+      );
     }
   };
 
@@ -349,7 +377,10 @@
   var mouseOut = function (element, callback) {
     if (mouse_is_down) {
       darkenDown(element);
-      callback(element.title, getFrequencyOfNote(element.title));
+      callback(
+        getMidiNoteNumber(element.title),
+        getFrequencyOfNote(element.title)
+      );
     }
   };
 
@@ -498,7 +529,7 @@
       key_pressed = getKeyPressed(key.keyCode);
 
       // Call user's noteDown function.
-      callback(key_pressed, getFrequencyOfNote(key_pressed));
+      callback(getMidiNoteNumber(key_pressed), getFrequencyOfNote(key_pressed));
       lightenUp(document.getElementById(key_pressed));
       return true;
     }
@@ -519,7 +550,7 @@
     if (typeof key_map[key.keyCode] !== 'undefined') {
       key_pressed = getKeyPressed(key.keyCode);
       // Call user's noteDown function.
-      callback(key_pressed, getFrequencyOfNote(key_pressed));
+      callback(getMidiNoteNumber(key_pressed), getFrequencyOfNote(key_pressed));
       darkenDown(document.getElementById(key_pressed));
       return true;
     }
@@ -601,7 +632,7 @@
         var note = getKeyPressed(key.keyCode);
         var el = document.getElementById(note);
         lightenUp(el);
-        that.keyDown(note, getFrequencyOfNote(note));
+        that.keyDown(getMidiNoteNumber(note), getFrequencyOfNote(note));
       }
     });
 
@@ -614,7 +645,7 @@
         var note = getKeyPressed(key.keyCode);
         var el = document.getElementById(note);
         darkenDown(el);
-        that.keyUp(note, getFrequencyOfNote(note));
+        that.keyUp(getMidiNoteNumber(note), getFrequencyOfNote(note));
       }
     });
   };
