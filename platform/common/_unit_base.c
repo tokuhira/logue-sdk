@@ -110,3 +110,14 @@ __attribute__((weak)) void unit_platform_exclusive(uint8_t messageId, void * dat
   (void)data;
   (void)dataSize;
 }
+
+__attribute__((weak)) void unit_voice_allocated(uint8_t voice, uint8_t note, uint8_t velocity) {
+  (void)voice;
+  (void)note;
+  (void)velocity;
+}
+
+__attribute__((weak)) void unit_voice_deallocated(uint8_t voice, uint8_t note) {
+  (void)voice;
+  (void)note;
+}

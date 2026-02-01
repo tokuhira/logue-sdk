@@ -122,6 +122,14 @@ public:
     buf_cpy_f32(mNoiseLevel, mNoiseLevelZ, kMk2MaxVoices);
     buf_cpy_f32(mWaveLevel, mWaveLevelZ, kMk2MaxVoices);
 
+    buf_clr_i32(mEgPhase, kMk2MaxVoices);
+    buf_clr_f32(mEgValue, kMk2MaxVoices);
+    buf_clr_f32(mEgOffset, kMk2MaxVoices);
+    for(int i = 0; i < kMk2MaxVoices; i++) 
+    {
+      mEgState[i] = kEgStateOff;
+    }
+
     mFormantFilter1.flush();
     mFormantFilter2.flush();
     mFormantFilter3.flush();
@@ -167,6 +175,7 @@ public:
   {
     const unit_runtime_osc_context_t * ctxt = static_cast<const unit_runtime_osc_context_t *>(runtime_desc_.hooks.runtime_context);
     UpdateVoicePitch(ctxt->pitch, ctxt->voiceLimit);
+    UpdateEg(frames);
     CalculateFilterCoeffs(ctxt);
     UpdateShape(ctxt->voiceLimit);
     UpdateNoiseLevel(ctxt->voiceLimit);
@@ -319,7 +328,67 @@ public:
     }
   }
 
-  void unit_platform_exclusive(uint8_t messageId, void * data, uint32_t /*dataSize*/) 
+  void UpdateEg(int frames)
+  {
+    // calculate mod value
+    const float depth = mParameter[kParamEgDepth];
+    for(int i = 0; i < kMk2MaxVoices >> 2; i++)
+    {
+      const int idx = i << 2;
+      float32x4_t eg = si_i32x4qn_to_f32x4(s32x4_ld(&mEgPhase[idx]), 31);
+      eg = float32x4_add(f32x4_ld(&mEgOffset[idx]), eg);
+      eg = float32x4_mul(eg, eg);
+      f32x4_str(&mEgValue[idx], float32x4_mulscal(eg, depth));
+    }
+
+    // calculate phase coeff
+    const float egAttack = mParameter[kParamEgAttack] * 0.01;
+    const float egRelease = mParameter[kParamEgRelease] * 0.01;
+    const float egHold = mParameter[kParamEgHold] * 0.01;
+    const bool egGt100 = mParameter[kParamEgHold] > 100;
+
+    const int32_t max = 0x7FFFFFFF; // one frame
+    const int32_t min = 1.f / ((runtime_desc_.samplerate / float(frames)) * 60.f) * 0x7FFFFFFF; // one minute 
+
+    mEgAttackCoeff = (1.f - (egAttack * egAttack)) * (max - min) + min;
+    mEgReleaseCoeff = (1.f - (egRelease * egRelease)) * (max - min) + min;
+    mEgHoldCoeff = (egGt100) ? 0 : (1.f - (egHold * egHold)) * (max - min) + min;
+
+    int32_t coeff[kMk2MaxVoices];
+    for(int i = 0; i < kMk2MaxVoices; i++)
+    {
+      coeff[i] = (mEgState[i] == kEgStateAttack) ? mEgAttackCoeff : 
+                  (mEgState[i] == kEgStateRelease) ? mEgReleaseCoeff : 
+                  (mEgState[i] == kEgStateHold) ? mEgHoldCoeff : 
+                  0;
+    }
+
+    // advance phase
+    uint32_t egFlags[kMk2MaxVoices];
+    for(int i = 0; i < kMk2MaxVoices >> 2; i++)
+    {
+      const int idx = i << 2;
+      int32x4_t phase = s32x4_ld(&mEgPhase[idx]);
+      int32x4_t nextPhase = int32x4_add(phase, s32x4_ld(&coeff[idx]));
+      uint32x4_t wrap = int32x4_gt(phase, nextPhase);
+      u32x4_str(&egFlags[idx], wrap);
+      s32x4_str(&mEgPhase[idx], vbslq_s32(wrap, s32x4_dup(0), phase));
+    }
+
+    // update state
+    for(int i = 0; i < kMk2MaxVoices; i++)
+    {
+      uint8_t & state = mEgState[i];
+      const bool advance = (egFlags[i] > 0);
+      state = (mEgState[i] == (uint8_t)kEgStateAttack && advance) ? (uint8_t)kEgStateRelease : state;
+      state = (mEgState[i] == (uint8_t)kEgStateHold && !egGt100 && advance) ? (uint8_t)kEgStateRelease : state;
+      state = (mEgState[i] == (uint8_t)kEgStateRelease && advance) ? (uint8_t)kEgStateOff : state;
+
+      mEgOffset[i] = (mEgState[i] == (uint8_t)kEgStateRelease || mEgState[i] == (uint8_t)kEgStateRelease) ? -1 : 0;
+    }
+  }
+
+  void platformExclusive(uint8_t messageId, void * data, uint32_t /*dataSize*/) 
   {
     const unit_runtime_osc_context_t * ctxt = static_cast<const unit_runtime_osc_context_t *>(runtime_desc_.hooks.runtime_context);
     switch (messageId)
@@ -469,6 +538,24 @@ public:
     }
   }
 
+
+  void voiceAllocated(uint8_t voice, uint8_t note, uint8_t velocity) 
+  {
+    // reset eg to attack
+    mEgPhase[voice] = 0;
+    mEgState[voice] = kEgStateAttack;
+  }
+
+  void voiceDeallocated(uint8_t voice, uint8_t note) 
+  {
+    // release eg
+    if(mParameter[kParamEgHold] == kHoldReleaseOnDealloc)
+    {
+      mEgPhase[voice] = 0;
+      mEgState[voice] = kEgStateRelease;
+    }
+  }
+
  private:
   /*===========================================================================*/
   /* Private Classes. */
@@ -487,6 +574,12 @@ public:
     kParamSemi,
     kParamFine,
     kParamNoise,
+    kParamDummy,
+    kParamEgAttack,
+    kParamEgHold,
+    kParamEgRelease,
+    kParamEgDepth,
+    kParamEgModTarget,
     kNumParams
   };
 
@@ -499,6 +592,20 @@ public:
     kModDestPitch,
     kModDestNoise,
     kNumModDest
+  };
+
+  enum
+  {
+    kEgStateAttack,
+    kEgStateHold,
+    kEgStateRelease,
+    kEgStateOff
+  };
+
+  enum
+  {
+    kHoldNoRelease = 101,
+    kHoldReleaseOnDealloc = 102
   };
 
   unit_runtime_desc_t runtime_desc_;
@@ -527,6 +634,15 @@ public:
   float mPitchMod[kMk2MaxVoices];
   float mNoiseLevelMod[kMk2MaxVoices];
 
+  // EG
+  int32_t mEgPhase[kMk2MaxVoices];
+  float   mEgValue[kMk2MaxVoices];
+  float   mEgOffset[kMk2MaxVoices];
+  uint8_t mEgState[kMk2MaxVoices];
+  int32_t mEgAttackCoeff;
+  int32_t mEgReleaseCoeff;
+  int32_t mEgHoldCoeff;
+
   enum { PitchModDepthCurveTableSize = 65 };
   const float mPitchModDepthCurve[PitchModDepthCurveTableSize];
   const float mCutoffs[3][5];
@@ -549,10 +665,13 @@ public:
     dsp::BiQuad::Coeffs dummy;
     for(int i = 0; i < ctxt->voiceLimit; i++)
     {
-      float reso = clipminmaxf(1.f, mParameter[kModDestResonance] * 0.1 + mResoMod[i] * 10.f, 10.f);
-      float syllable = clipminmaxf(0.f, mParameter[kModDestSyllable] * 0.01 + mSyllableMod[i] * 4.f, 4.f);
-      float shift = 1.f + clipminmaxf(-0.5f, mParameter[kModDestFormant] * 0.01 + mFormantMod[i], 0.5);
+      const float reso = clipminmaxf(1.f, mParameter[kParamResonance] * 0.1 + mResoMod[i] * 10.f, 10.f);
+      const float shift = 1.f + clipminmaxf(-0.5f, mParameter[kParamFormant] * 0.01 + mFormantMod[i], 0.5);
 
+      float syllableStart = clipminmaxf(0.f, mParameter[kParamSyllable] * 0.01 + mSyllableMod[i] * 4.f, 4.f);
+      float syllableTarget = mParameter[kParamEgModTarget] * 0.01;
+      const float syllable = syllableStart + (syllableTarget - syllableStart) * mEgValue[i];
+      
       int formantWhole = static_cast<int>(syllable);
       int formantWhole_1 = (formantWhole == 4) ? 4.f : formantWhole + 1;
       float formantFrac = syllable - formantWhole;

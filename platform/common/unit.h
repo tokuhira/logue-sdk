@@ -40,6 +40,8 @@ void unit_gate_on(uint8_t);
 void unit_gate_off(void);
 void unit_all_note_off(void);
 void unit_platform_exclusive(uint8_t, void *, uint32_t dataSize);
+void unit_voice_allocated(uint8_t, uint8_t, uint8_t);
+void unit_voice_deallocated(uint8_t, uint8_t);
 
 // deprecated funtions
 // All modulation will be handled by the host, either baked into the argument (in the case of pitch) 
