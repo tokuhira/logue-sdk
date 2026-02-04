@@ -122,10 +122,10 @@ extern "C" {
     f32x2_str(&context->unitModDataPlus[startVoice], float32x2_addscal(float32x2_mulscal(clipped, 0.5f), 0.5f));
   }
 
-  void WriteUnitModDataPlusx4(const unit_runtime_osc_context_t * context, float32x2_t mod, uint8_t startVoice)
+  void WriteUnitModDataPlusx4(const unit_runtime_osc_context_t * context, float32x4_t mod, uint8_t startVoice)
   {
     startVoice = clipminmaxi32(0, startVoice, context->modDataSize - 1);
-    f32x2_str(&context->unitModDataPlus[startVoice], clip01fx2(mod));
+    f32x4_str(&context->unitModDataPlus[startVoice], clip01fx4(mod));
   }
 
   void WriteUnitModDataPlusMinusx4(const unit_runtime_osc_context_t * context, float32x4_t mod, uint8_t startVoice)

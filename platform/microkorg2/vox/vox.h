@@ -175,7 +175,7 @@ public:
   {
     const unit_runtime_osc_context_t * ctxt = static_cast<const unit_runtime_osc_context_t *>(runtime_desc_.hooks.runtime_context);
     UpdateVoicePitch(ctxt->pitch, ctxt->voiceLimit);
-    UpdateEg(frames, ctxt->voiceLimit, ctxt->unitModDataPlus, ctxt->unitModDataPlusMinus);
+    UpdateEg(frames, ctxt);
     CalculateFilterCoeffs(ctxt);
     UpdateShape(ctxt->voiceLimit);
     UpdateNoiseLevel(ctxt->voiceLimit);
@@ -344,59 +344,66 @@ public:
     }
   }
 
-  void UpdateEg(int frames, uint32_t voiceLimit, float * modPlus, float * modPlusMinus)
+  void UpdateEg(int frames, const unit_runtime_osc_context_t * context)
   {
     // calculate mod value (always calc 8 for simplicity/readability)
     const float depth = mParameter[kParamEgDepth] * 0.01;
-    float32x4x2_t rawEgValue;
+    float modOutput[8];
     for(int i = 0; i < kMk2MaxVoices >> 2; i++)
     {
       const int idx = i << 2;
       float32x4_t eg = si_i32x4qn_to_f32x4(s32x4_ld(&mEgPhase[idx]), 31);
       eg = float32x4_sel(uint32x4_eq(u32x4_ld(&mEgState[idx]), u32x4_dup(kEgStateHold)), f32x4_dup(1.f), eg);
       eg = float32x4_add(f32x4_ld(&mEgOffset[idx]), eg);
-      rawEgValue.val[i] = float32x4_mul(eg, eg);
-      f32x4_str(&mEgValue[idx], float32x4_mulscal(rawEgValue.val[i], depth));
+      eg = float32x4_mul(eg, eg);
+      f32x4_str(&modOutput[idx], eg);
+      f32x4_str(&mEgValue[idx], float32x4_mulscal(eg, depth));
     }
 
     // output mod value, taking care not to overwrite other data that may exist
-    switch (voiceLimit)
+    switch (context->voiceLimit)
     {
       case kMk2MaxVoices:
       {
-        for(int i = 0; i < 2; i++)
+        for(int i = 0; i < kMk2MaxVoices/4; i++)
         {
-          const int idx = i << 2;
-          f32x4_str(&modPlus[idx], rawEgValue.val[i]);
-          f32x4_str(&modPlusMinus[idx], float32x4_subscal(float32x4_mulscal(eg, 2.f), 1.f));
+          const int idx = i * 4;
+          float32x4_t mod = f32x4_ld(&modOutput[idx]);
+          WriteUnitModDataPlusx4(context, mod, idx);
+
+          mod = float32x4_fmuladd(f32x4_dup(-1.f), mod, f32x4_dup(2.f));
+          WriteUnitModDataPlusMinusx4(context, mod, idx);
         }
         break;
       }
     
       case kMk2HalfVoices:
       {
-        f32x4_str(&modPlus[0], rawEgValue.val[0]);
-        f32x4_str(&modPlusMinus[0], float32x4_subscal(float32x4_mulscal(eg, 2.f), 1.f));
+        float32x4_t mod = f32x4_ld(&modOutput[0]);
+        WriteUnitModDataPlusx4(context, mod, 0);
+
+        mod = float32x4_fmuladd(f32x4_dup(-1.f), mod, f32x4_dup(2.f));
+        WriteUnitModDataPlusMinusx4(context, mod, 0);
         break;
       }
 
       case kMk2QuarterVoices:
       {
-        float temp[4];
-        f32x4_str(temp, rawEgValue.val[0]);
-        f32x2_str(&modPlus[0], f32x2_ld(temp));
-        f32x2_str(&modPlusMinus[0], float32x2_subscal(float32x2_mulscal(eg, 2.f), 1.f));
+        float32x2_t mod = f32x2_ld(&modOutput[0]);
+        WriteUnitModDataPlusx2(context, mod, 0);
+        
+        mod = float32x2_fmuladd(f32x2_dup(-1.f), mod, f32x2_dup(2.f));
+        WriteUnitModDataPlusMinusx2(context, mod, 0);
         break;
       }
 
       case kMk2SingleVoice:
       {
-        float temp[4];
-        f32x4_str(temp, rawEgValue.val[0]);
-        modPlus[0] = temp[0];
-        modPlus[0] = temp[0];
+        WriteUnitModDataPlusx1(context, modOutput[0], 0);
+        WriteUnitModDataPlusMinusx1(context, modOutput[0] * 2.f - 1.f, 0);
         break;
       }
+    
       default:
         break;
     }
@@ -606,6 +613,7 @@ public:
       case k_voice_event_steal:
       case k_voice_event_allocation:
       {
+        mEgOffset[voice] = 0;
         mEgPhase[voice] = 0;
         mEgState[voice] = kEgStateAttack;
         break;
@@ -615,6 +623,7 @@ public:
       {
         if(mParameter[kParamEgHold] == kHoldReleaseWithNote)
         {
+          mEgOffset[voice] = -1;
           mEgPhase[voice] = 0;
           mEgState[voice] = kEgStateRelease;
         }
@@ -675,8 +684,8 @@ public:
 
   enum
   {
-    kHoldNoRelease = 101,
-    kHoldReleaseWithNote = 102
+    kHoldReleaseWithNote = 101,
+    kHoldNoRelease = 102
   };
 
   unit_runtime_desc_t runtime_desc_;
@@ -791,7 +800,6 @@ public:
       filterOut = float32x4_add(filterOut, mFormantFilter3.process_so_x4(sample, mFormantCoeffs[2], voiceNum));
       write_oscillator_output_x4(out, filterOut, offset, ctxt->outputStride, i);
     }
-    WriteUnitModDatax4(ctxt, filterOut, voiceNum);
   }
 
   void ProcessOscx2(const unit_runtime_osc_context_t * ctxt, int voiceNum, float * out, size_t frames)
@@ -809,7 +817,6 @@ public:
       filterOut = float32x2_add(filterOut, mFormantFilter3.process_so_x2(sample, mFormantCoeffs[2], voiceNum));
       write_oscillator_output_x2(out, filterOut, offset, ctxt->outputStride, ctxt->voiceOffset, i);
     }
-    WriteUnitModDatax2(ctxt, filterOut, 0);
   }
 
   void ProcessOscx1(const unit_runtime_osc_context_t * ctxt, int voiceNum, float * out, size_t frames)
@@ -827,7 +834,6 @@ public:
       filterOut = filterOut + mFormantFilter3.process_so_x1(sample, mFormantCoeffs[2], voiceNum);
       write_oscillator_output_x1(out, filterOut, offset, ctxt->outputStride, i, ctxt->voiceOffset);
     }
-    WriteUnitModDatax1(ctxt, filterOut, 0);
   }
 
   // original DPW paper https://ieeexplore.ieee.org/abstract/document/5153306
