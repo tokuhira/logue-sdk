@@ -79,10 +79,6 @@ __attribute__((used)) void unit_platform_exclusive(uint8_t messageId, void * dat
   s_osc_instance.platformExclusive(messageId, data, dataSize);
 }
 
-__attribute__((weak)) void unit_voice_allocated(uint8_t voice, uint8_t note, uint8_t velocity) {
-  s_osc_instance.voiceAllocated(voice, note, velocity);
-}
-
-__attribute__((weak)) void unit_voice_deallocated(uint8_t voice, uint8_t note) {
-  s_osc_instance.voiceDeallocated(voice, note);
+__attribute__((weak)) void unit_osc_voice_event(uint8_t event, uint8_t voice, uint8_t note, uint8_t velocity) {
+  s_osc_instance.voiceEvent(event, voice, note, velocity);
 }

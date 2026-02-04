@@ -172,8 +172,7 @@ typedef void (*unit_pitch_bend_func)(uint16_t);                              // 
 typedef void (*unit_channel_pressure_func)(uint8_t);                         // sym: unit_channel_pressure
 typedef void (*unit_aftertouch_func)(uint8_t, uint8_t);                      // sym: unit_aftertouch
 typedef void (*unit_platform_exclusive_func)(uint8_t, void *, uint32_t);     // sym: unit_platform_exclusive
-typedef void (*unit_voice_allocated_func)(uint8_t, uint8_t, uint8_t);        // sym: unit_voice_allocated
-typedef void (*unit_voice_deallocated_func)(uint8_t, uint8_t);               // sym: unit_voice_deallocated
+typedef void (*unit_osc_voice_event_func)(uint8_t, uint8_t, uint8_t, uint8_t); // sym: unit_osc_voice_event
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -175,7 +175,7 @@ public:
   {
     const unit_runtime_osc_context_t * ctxt = static_cast<const unit_runtime_osc_context_t *>(runtime_desc_.hooks.runtime_context);
     UpdateVoicePitch(ctxt->pitch, ctxt->voiceLimit);
-    UpdateEg(frames);
+    UpdateEg(frames, ctxt->voiceLimit, ctxt->unitModDataPlus, ctxt->unitModDataPlusMinus);
     CalculateFilterCoeffs(ctxt);
     UpdateShape(ctxt->voiceLimit);
     UpdateNoiseLevel(ctxt->voiceLimit);
@@ -234,6 +234,7 @@ public:
     switch (index) 
     {
       case kParamSyllable:
+      case kParamEgModTarget:
       {
         char vowels[] = { 'A', 'I', 'U', 'E', 'O' };
 
@@ -245,6 +246,21 @@ public:
         std::string ret = "}" + std::to_string(displayNum);
         ret = ret + "{" + left + ' ' + ':' + ' ' + right;
         return ret.c_str();
+        break;
+      }
+
+      case kParamEgHold:
+      {
+        if(value <= 100)
+        {          
+          std::string ret = "}" + std::to_string(value) + "{%";
+          return ret.c_str();
+        }
+        else
+        {
+          std::string val = (value == 101) ? "Key Off" : "Latch";
+          return val.c_str();
+        }
         break;
       }
 
@@ -328,17 +344,61 @@ public:
     }
   }
 
-  void UpdateEg(int frames)
+  void UpdateEg(int frames, uint32_t voiceLimit, float * modPlus, float * modPlusMinus)
   {
-    // calculate mod value
-    const float depth = mParameter[kParamEgDepth];
+    // calculate mod value (always calc 8 for simplicity/readability)
+    const float depth = mParameter[kParamEgDepth] * 0.01;
+    float32x4x2_t rawEgValue;
     for(int i = 0; i < kMk2MaxVoices >> 2; i++)
     {
       const int idx = i << 2;
       float32x4_t eg = si_i32x4qn_to_f32x4(s32x4_ld(&mEgPhase[idx]), 31);
+      eg = float32x4_sel(uint32x4_eq(u32x4_ld(&mEgState[idx]), u32x4_dup(kEgStateHold)), f32x4_dup(1.f), eg);
       eg = float32x4_add(f32x4_ld(&mEgOffset[idx]), eg);
-      eg = float32x4_mul(eg, eg);
-      f32x4_str(&mEgValue[idx], float32x4_mulscal(eg, depth));
+      rawEgValue.val[i] = float32x4_mul(eg, eg);
+      f32x4_str(&mEgValue[idx], float32x4_mulscal(rawEgValue.val[i], depth));
+    }
+
+    // output mod value, taking care not to overwrite other data that may exist
+    switch (voiceLimit)
+    {
+      case kMk2MaxVoices:
+      {
+        for(int i = 0; i < 2; i++)
+        {
+          const int idx = i << 2;
+          f32x4_str(&modPlus[idx], rawEgValue.val[i]);
+          f32x4_str(&modPlusMinus[idx], float32x4_subscal(float32x4_mulscal(eg, 2.f), 1.f));
+        }
+        break;
+      }
+    
+      case kMk2HalfVoices:
+      {
+        f32x4_str(&modPlus[0], rawEgValue.val[0]);
+        f32x4_str(&modPlusMinus[0], float32x4_subscal(float32x4_mulscal(eg, 2.f), 1.f));
+        break;
+      }
+
+      case kMk2QuarterVoices:
+      {
+        float temp[4];
+        f32x4_str(temp, rawEgValue.val[0]);
+        f32x2_str(&modPlus[0], f32x2_ld(temp));
+        f32x2_str(&modPlusMinus[0], float32x2_subscal(float32x2_mulscal(eg, 2.f), 1.f));
+        break;
+      }
+
+      case kMk2SingleVoice:
+      {
+        float temp[4];
+        f32x4_str(temp, rawEgValue.val[0]);
+        modPlus[0] = temp[0];
+        modPlus[0] = temp[0];
+        break;
+      }
+      default:
+        break;
     }
 
     // calculate phase coeff
@@ -347,12 +407,12 @@ public:
     const float egHold = mParameter[kParamEgHold] * 0.01;
     const bool egGt100 = mParameter[kParamEgHold] > 100;
 
-    const int32_t max = 0x7FFFFFFF; // one frame
+    const int32_t max = 0x1FFFFFFF;
     const int32_t min = 1.f / ((runtime_desc_.samplerate / float(frames)) * 60.f) * 0x7FFFFFFF; // one minute 
 
-    mEgAttackCoeff = (1.f - (egAttack * egAttack)) * (max - min) + min;
-    mEgReleaseCoeff = (1.f - (egRelease * egRelease)) * (max - min) + min;
-    mEgHoldCoeff = (egGt100) ? 0 : (1.f - (egHold * egHold)) * (max - min) + min;
+    mEgAttackCoeff = CookEGTime(egAttack, min, max);
+    mEgReleaseCoeff = CookEGTime(egRelease, min, max);
+    mEgHoldCoeff = (egGt100) ? 0 : CookEGTime(egHold, min, max);
 
     int32_t coeff[kMk2MaxVoices];
     for(int i = 0; i < kMk2MaxVoices; i++)
@@ -372,19 +432,19 @@ public:
       int32x4_t nextPhase = int32x4_add(phase, s32x4_ld(&coeff[idx]));
       uint32x4_t wrap = int32x4_gt(phase, nextPhase);
       u32x4_str(&egFlags[idx], wrap);
-      s32x4_str(&mEgPhase[idx], vbslq_s32(wrap, s32x4_dup(0), phase));
+      s32x4_str(&mEgPhase[idx], vbslq_s32(wrap, s32x4_dup(0), nextPhase));
     }
 
     // update state
     for(int i = 0; i < kMk2MaxVoices; i++)
     {
-      uint8_t & state = mEgState[i];
+      uint32_t & state = mEgState[i];
       const bool advance = (egFlags[i] > 0);
-      state = (mEgState[i] == (uint8_t)kEgStateAttack && advance) ? (uint8_t)kEgStateRelease : state;
-      state = (mEgState[i] == (uint8_t)kEgStateHold && !egGt100 && advance) ? (uint8_t)kEgStateRelease : state;
-      state = (mEgState[i] == (uint8_t)kEgStateRelease && advance) ? (uint8_t)kEgStateOff : state;
+      state = (mEgState[i] == (uint32_t)kEgStateRelease && advance) ? (uint32_t)kEgStateOff : state;
+      state = (mEgState[i] == (uint32_t)kEgStateHold && !egGt100 && advance) ? (uint32_t)kEgStateRelease : state;
+      state = (mEgState[i] == (uint32_t)kEgStateAttack && advance) ? (uint32_t)kEgStateHold : state;
 
-      mEgOffset[i] = (mEgState[i] == (uint8_t)kEgStateRelease || mEgState[i] == (uint8_t)kEgStateRelease) ? -1 : 0;
+      mEgOffset[i] = (mEgState[i] == kEgStateRelease) ? -1 : 0;
     }
   }
 
@@ -539,20 +599,31 @@ public:
   }
 
 
-  void voiceAllocated(uint8_t voice, uint8_t note, uint8_t velocity) 
+  void voiceEvent(uint8_t event, uint8_t voice, uint8_t /*note*/, uint8_t /*velocity*/) 
   {
-    // reset eg to attack
-    mEgPhase[voice] = 0;
-    mEgState[voice] = kEgStateAttack;
-  }
-
-  void voiceDeallocated(uint8_t voice, uint8_t note) 
-  {
-    // release eg
-    if(mParameter[kParamEgHold] == kHoldReleaseOnDealloc)
+    switch (event)
     {
-      mEgPhase[voice] = 0;
-      mEgState[voice] = kEgStateRelease;
+      case k_voice_event_steal:
+      case k_voice_event_allocation:
+      {
+        mEgPhase[voice] = 0;
+        mEgState[voice] = kEgStateAttack;
+        break;
+      }
+
+      case k_voice_event_release:
+      {
+        if(mParameter[kParamEgHold] == kHoldReleaseWithNote)
+        {
+          mEgPhase[voice] = 0;
+          mEgState[voice] = kEgStateRelease;
+        }
+        break;
+      }
+
+      case k_voice_event_deallocation:
+      default:
+        break;
     }
   }
 
@@ -605,7 +676,7 @@ public:
   enum
   {
     kHoldNoRelease = 101,
-    kHoldReleaseOnDealloc = 102
+    kHoldReleaseWithNote = 102
   };
 
   unit_runtime_desc_t runtime_desc_;
@@ -638,7 +709,7 @@ public:
   int32_t mEgPhase[kMk2MaxVoices];
   float   mEgValue[kMk2MaxVoices];
   float   mEgOffset[kMk2MaxVoices];
-  uint8_t mEgState[kMk2MaxVoices];
+  uint32_t mEgState[kMk2MaxVoices];
   int32_t mEgAttackCoeff;
   int32_t mEgReleaseCoeff;
   int32_t mEgHoldCoeff;
@@ -667,19 +738,29 @@ public:
     {
       const float reso = clipminmaxf(1.f, mParameter[kParamResonance] * 0.1 + mResoMod[i] * 10.f, 10.f);
       const float shift = 1.f + clipminmaxf(-0.5f, mParameter[kParamFormant] * 0.01 + mFormantMod[i], 0.5);
-
       float syllableStart = clipminmaxf(0.f, mParameter[kParamSyllable] * 0.01 + mSyllableMod[i] * 4.f, 4.f);
       float syllableTarget = mParameter[kParamEgModTarget] * 0.01;
-      const float syllable = syllableStart + (syllableTarget - syllableStart) * mEgValue[i];
       
-      int formantWhole = static_cast<int>(syllable);
+      int formantWhole = static_cast<int>(syllableStart);
       int formantWhole_1 = (formantWhole == 4) ? 4.f : formantWhole + 1;
-      float formantFrac = syllable - formantWhole;
+      float formantFrac = syllableStart - formantWhole;
   
-      float f1 = linintf(formantFrac, mCutoffs[0][formantWhole], mCutoffs[0][formantWhole_1]) * shift;
-      float f2 = linintf(formantFrac, mCutoffs[1][formantWhole], mCutoffs[1][formantWhole_1]) * shift;
-      float f3 = linintf(formantFrac, mCutoffs[2][formantWhole], mCutoffs[2][formantWhole_1]) * shift;
+      float f1Start = linintf(formantFrac, mCutoffs[0][formantWhole], mCutoffs[0][formantWhole_1]) * shift;
+      float f2Start = linintf(formantFrac, mCutoffs[1][formantWhole], mCutoffs[1][formantWhole_1]) * shift;
+      float f3Start = linintf(formantFrac, mCutoffs[2][formantWhole], mCutoffs[2][formantWhole_1]) * shift;
   
+      formantWhole = static_cast<int>(syllableTarget);
+      formantWhole_1 = (formantWhole == 4) ? 4.f : formantWhole + 1;
+      formantFrac = syllableTarget - formantWhole;
+  
+      float f1Target = linintf(formantFrac, mCutoffs[0][formantWhole], mCutoffs[0][formantWhole_1]) * shift;
+      float f2Target = linintf(formantFrac, mCutoffs[1][formantWhole], mCutoffs[1][formantWhole_1]) * shift;
+      float f3Target = linintf(formantFrac, mCutoffs[2][formantWhole], mCutoffs[2][formantWhole_1]) * shift;
+
+      const float f1 = f1Start + (f1Target - f1Start) * mEgValue[i];
+      const float f2 = f2Start + (f2Target - f2Start) * mEgValue[i];
+      const float f3 = f3Start + (f3Target - f3Start) * mEgValue[i];
+
       float f1_k = dsp::BiQuad::Coeffs::tanPiWc(dsp::BiQuad::Coeffs::wc(f1, 1.f/runtime_desc_.samplerate));
       float f2_k = dsp::BiQuad::Coeffs::tanPiWc(dsp::BiQuad::Coeffs::wc(f2, 1.f/runtime_desc_.samplerate));
       float f3_k = dsp::BiQuad::Coeffs::tanPiWc(dsp::BiQuad::Coeffs::wc(f3, 1.f/runtime_desc_.samplerate));
@@ -929,6 +1010,13 @@ public:
     buf_cpy_f32(&mNoiseLevel[voiceNum], &mNoiseLevelZ[voiceNum], 4);
     s32x4_str(&mNoiseX1[voiceNum], noiseX1);
     s32x4_str(&mNoiseX2[voiceNum], noiseX2);
+  }
+
+  fast_inline int32_t CookEGTime(float paramValue, const int32_t min, const int32_t max)
+  {
+    float temp = (paramValue < 0.1) ? paramValue * 9.f : paramValue * 0.111 + 0.889f;
+    temp = 1.f - temp;
+    return (paramValue == 0.f) ? 0x7FFFFFFF : temp * (max - min) + min;
   }
   /*===========================================================================*/
   /* Constants. */

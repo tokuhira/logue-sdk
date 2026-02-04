@@ -73,6 +73,17 @@ extern "C" {
    */
   extern const uint32_t k_osc_api_version;
   
+  /*
+  * Voice management event flags
+  */
+  enum {
+    k_voice_event_allocation,
+    k_voice_event_steal,
+    k_voice_event_release,
+    k_voice_event_deallocation,
+    k_num_voice_events
+  };
+
   /**
    * Get MCU hash
    *

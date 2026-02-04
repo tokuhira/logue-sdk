@@ -41,7 +41,7 @@ const __unit_header unit_header_t unit_header =
 
         // Page 3
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"EG Atk"}},
-        {0, 102, 0, 0, k_unit_param_type_none, 0, 0, 0, {"EG Hld"}},
+        {0, 102, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"EG Hld"}},
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"EG Rel"}},
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"EG Depth"}},
         {0, 400, 200, 0, k_unit_param_type_strings, 2, 1, 0, {"Mod Trgt"}},
