@@ -42,3 +42,4 @@
  | 0x666d6f64 ('fmod') | [Frostmod Audio](https://github.com/frostmod) |
  | 0x6a504952 ('jPIR') | [Joerg Piringer](https://joerg.piringer.net/nts3) |
  | 0x4d72474a ('MrGJ') | [Glenn Jones](https://github.com/mrglennjones) |
+ | 0x72677276 ('rgrv') | [Gerard Braad](https://music.gbraad.nl/logue/) |
